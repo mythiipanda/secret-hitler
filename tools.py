@@ -1,7 +1,8 @@
 from typing import List, Optional, Tuple
-from llm import call_model, stream_model
+from llm import call_model, stream_model, LLMClient
 from parsers import nom_parser, vote_parser, pres_parser, chanc_parser, inv_parser
 from prompts import LIBERAL_PROMPT_TEMPLATE, FASCIST_PROMPT_TEMPLATE, RULES_SUMMARY
+from log import log as logger
 
 RECENT_HISTORY_LINES = 6
 
@@ -58,9 +59,9 @@ def _state_summary(state: dict) -> dict:
         "discard_size": len(state.get("discard_pile", [])),
     }
 
-def _stream_and_parse(prompt: str, parser, agent_id: int, model: Optional[str] = None):
+def _stream_and_parse(prompt: str, parser, agent_id: int, role: str, model: Optional[str] = None, llm_client: Optional[LLMClient] = None):
     """
-    Stream model output and print private thoughts token-by-token.
+    Stream model output and print private thoughts token-by-token with role shown.
     Expects the model to output PRIVATE_THOUGHTS plain text, then a line ===JSON===,
     then the JSON object. Returns the parsed Pydantic model.
 
@@ -70,36 +71,41 @@ def _stream_and_parse(prompt: str, parser, agent_id: int, model: Optional[str] =
     seen_marker = False
     json_parts: List[str] = []
     thought_started = False
+    role_display = role.capitalize() if role else "Unknown"
 
-    for chunk in stream_model(prompt, model=model):
+    stream_iter = llm_client.stream(prompt, model=model) if llm_client else stream_model(prompt, model=model)
+    for chunk in stream_iter:
         text = chunk or ""
         if not seen_marker:
             if "===JSON===" in text:
                 before, _, after = text.partition("===JSON===")
                 if before:
                     if not thought_started:
-                        print(f"[THOUGHTS][Player {agent_id}]: ", end="", flush=True)
+                        logger(f"[THOUGHTS][Player {agent_id} ({role_display})]: ", end="")
                         thought_started = True
-                    print(before, end="", flush=True)
+                    logger(before, end="")
                 seen_marker = True
                 if after:
                     json_parts.append(after)
             else:
                 if not thought_started:
-                    print(f"[THOUGHTS][Player {agent_id}]: ", end="", flush=True)
+                    logger(f"[THOUGHTS][Player {agent_id} ({role_display})]: ", end="")
                     thought_started = True
-                print(text, end="", flush=True)
+                logger(text, end="")
         else:
             json_parts.append(text)
 
     if thought_started:
-        print()  # newline after streaming thoughts
+        logger("", end="\n")  # newline after streaming thoughts
 
     json_text = "".join(json_parts).strip()
 
     # If stream didn't produce JSON, fall back to synchronous model call and extract
     if not json_text:
-        full = call_model(prompt, model=model)
+        if llm_client:
+            full = llm_client.call(prompt, model=model)
+        else:
+            full = call_model(prompt, model=model)
         if "===JSON===" in full:
             _, _, after = full.partition("===JSON===")
             json_text = after.strip()
@@ -111,12 +117,13 @@ def _stream_and_parse(prompt: str, parser, agent_id: int, model: Optional[str] =
             if m:
                 json_text = m.group(1).strip()
             else:
-                raise ValueError("Failed to extract JSON from model output (stream + fallback). Full response:\n" + full)
+                excerpt = (full[:1000] + "...") if len(full) > 1000 else full
+                raise ValueError("Failed to extract JSON from model output (stream + fallback). Excerpt:\n" + excerpt)
 
     parsed = parser.parse(json_text)
     return parsed
 
-def nominate_tool(agent_id: int, role: str, state: dict, model: Optional[str] = None) -> Tuple[int, str, str]:
+def nominate_tool(agent_id: int, role: str, state: dict, model: Optional[str] = None, llm_client: Optional[LLMClient] = None) -> Tuple[int, str, str]:
     fmt = nom_parser.get_format_instructions()
     ss = _state_summary(state)
     tmpl = LIBERAL_PROMPT_TEMPLATE if role == "liberal" else FASCIST_PROMPT_TEMPLATE
@@ -132,15 +139,15 @@ def nominate_tool(agent_id: int, role: str, state: dict, model: Optional[str] = 
         action="Nominate a Chancellor from eligible players: " + ", ".join(str(p["id"]) for p in state["players"] if p["alive"] and p["id"] != agent_id),
         format_instructions=fmt,
     )
-    parsed = _stream_and_parse(prompt, nom_parser, agent_id, model=model)
+    parsed = _stream_and_parse(prompt, nom_parser, agent_id, role, model=model, llm_client=llm_client)
     cid = int(parsed.nominated_chancellor)
     public = parsed.public_statement or ""
     private = parsed.private_thoughts or ""
     if public:
-        print(f"[NOMINATION] Player {agent_id}: {public}")
+        logger(f"[NOMINATION] Player {agent_id}: {public}")
     return cid, public, private
 
-def vote_tool(agent_id: int, role: str, state: dict, model: Optional[str] = None) -> Tuple[bool, str, str]:
+def vote_tool(agent_id: int, role: str, state: dict, model: Optional[str] = None, llm_client: Optional[LLMClient] = None) -> Tuple[bool, str, str]:
     fmt = vote_parser.get_format_instructions()
     ss = _state_summary(state)
     tmpl = LIBERAL_PROMPT_TEMPLATE if role == "liberal" else FASCIST_PROMPT_TEMPLATE
@@ -156,14 +163,14 @@ def vote_tool(agent_id: int, role: str, state: dict, model: Optional[str] = None
         action=f"Vote on government: President {state['current_president_idx']}, Chancellor {state['nominated_chancellor_idx']}. Explain your public statement and provide private_thoughts.",
         format_instructions=fmt,
     )
-    parsed = _stream_and_parse(prompt, vote_parser, agent_id, model=model)
+    parsed = _stream_and_parse(prompt, vote_parser, agent_id, role, model=model, llm_client=llm_client)
     public = parsed.public_statement or ""
     private = parsed.private_thoughts or ""
     if public:
-        print(f"[VOTE] Player {agent_id}: {public}")
+        logger(f"[VOTE] Player {agent_id}: {public}")
     return bool(parsed.vote), public, private
 
-def president_legislate_tool(agent_id: int, state: dict, model: Optional[str] = None) -> Tuple[List[str], str, str]:
+def president_legislate_tool(agent_id: int, state: dict, model: Optional[str] = None, llm_client: Optional[LLMClient] = None) -> Tuple[List[str], str, str]:
     fmt = pres_parser.get_format_instructions()
     ss = _state_summary(state)
     drawn = state.get("drawn_policies", [])
@@ -181,7 +188,7 @@ def president_legislate_tool(agent_id: int, state: dict, model: Optional[str] = 
         action=f"You are President and you drew: {drawn}. Discard one and pass remaining two to Chancellor.",
         format_instructions=fmt,
     )
-    parsed = _stream_and_parse(prompt, pres_parser, agent_id, model=model)
+    parsed = _stream_and_parse(prompt, pres_parser, agent_id, role_local, model=model, llm_client=llm_client)
     discard = parsed.discard
     rem = drawn.copy()
     if discard in rem:
@@ -191,10 +198,10 @@ def president_legislate_tool(agent_id: int, state: dict, model: Optional[str] = 
     public = parsed.public_claim or ""
     private = parsed.private_thoughts or ""
     if public:
-        print(f"[PRESIDENT] Player {agent_id}: {public}")
+        logger(f"[PRESIDENT] Player {agent_id}: {public}")
     return rem, public, private
 
-def chancellor_legislate_tool(agent_id: int, state: dict, model: Optional[str] = None) -> Tuple[str, str, str]:
+def chancellor_legislate_tool(agent_id: int, state: dict, model: Optional[str] = None, llm_client: Optional[LLMClient] = None) -> Tuple[str, str, str]:
     fmt = chanc_parser.get_format_instructions()
     ss = _state_summary(state)
     passed = state.get("passed_policies", [])
@@ -212,15 +219,15 @@ def chancellor_legislate_tool(agent_id: int, state: dict, model: Optional[str] =
         action=f"You are Chancellor and received: {passed}. Choose which policy to enact.",
         format_instructions=fmt,
     )
-    parsed = _stream_and_parse(prompt, chanc_parser, agent_id, model=model)
+    parsed = _stream_and_parse(prompt, chanc_parser, agent_id, role_local, model=model, llm_client=llm_client)
     enact = parsed.enact
     public = parsed.public_claim or ""
     private = parsed.private_thoughts or ""
     if public:
-        print(f"[CHANCELLOR] Player {agent_id}: {public}")
+        logger(f"[CHANCELLOR] Player {agent_id}: {public}")
     return enact, public, private
 
-def investigate_tool(agent_id: int, state: dict, model: Optional[str] = None) -> Tuple[int, str, str]:
+def investigate_tool(agent_id: int, state: dict, model: Optional[str] = None, llm_client: Optional[LLMClient] = None) -> Tuple[int, str, str]:
     fmt = inv_parser.get_format_instructions()
     ss = _state_summary(state)
     eligible = [p["id"] for p in state["players"] if p["alive"] and not p.get("investigated", False)]
@@ -238,10 +245,10 @@ def investigate_tool(agent_id: int, state: dict, model: Optional[str] = None) ->
         action=f"You may investigate one player. Eligible: {eligible}. Pick one and give reason.",
         format_instructions=fmt,
     )
-    parsed = _stream_and_parse(prompt, inv_parser, agent_id, model=model)
+    parsed = _stream_and_parse(prompt, inv_parser, agent_id, role_local, model=model, llm_client=llm_client)
     target = int(parsed.investigate)
     public = parsed.reason or ""
     private = parsed.private_thoughts or ""
     if public:
-        print(f"[INVESTIGATE] Player {agent_id} reason: {public}")
+        logger(f"[INVESTIGATE] Player {agent_id} reason: {public}")
     return target, public, private
