@@ -54,7 +54,9 @@ def voting_node(state: GameState) -> GameState:
         if state["players"][agent.agent_id]["alive"]:
             vote = agent.vote(state)
             votes[str(agent.agent_id)] = vote
-            print(f"  Player {agent.agent_id}: {'JA' if vote else 'NEIN'}")
+            role = state["players"][agent.agent_id].get("role", "unknown")
+            role_display = role.capitalize()
+            print(f"  Player {agent.agent_id} ({role_display}): {'JA' if vote else 'NEIN'}")
     ja_votes = sum(1 for v in votes.values() if v)
     total_votes = len(votes)
     elected = ja_votes > total_votes / 2
