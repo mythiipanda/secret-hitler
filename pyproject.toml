@@ -1,0 +1,13 @@
+[project]
+name = "secrethitler"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "langgraph",
+    "langchain-google-genai",
+    "langchain-core",
+    "python-dotenv",
+    "google-genai"
+]
