@@ -8,7 +8,7 @@ from log import init as init_log, log as logger, close as close_log
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 load_dotenv()
-random.seed(69)
+random.seed(33)
 
 def main():
     log_path = init_log()
