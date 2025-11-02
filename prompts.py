@@ -40,9 +40,8 @@ TASK
  
 OUTPUT RULES
 - You may stream internal reasoning tokens (these are private and can be printed for a spectator), but do NOT reveal secret role cards or invent unseen knowledge beyond the provided state.
-- After any streamed reasoning, output a single line exactly: ===JSON===
-- Then output a single JSON object only that matches FORMAT INSTRUCTIONS.
- 
+- Output your response in the exact format specified below.
+
 FORMAT INSTRUCTIONS
 {format_instructions}
  
@@ -86,9 +85,8 @@ TASK
  
 OUTPUT RULES
 - You may stream internal reasoning tokens (these are private and can be printed for a spectator), but do NOT reveal secret role cards of non-fascists or invent unseen knowledge.
-- After any streamed reasoning, output a single line exactly: ===JSON===
-- Then output a single JSON object only that matches FORMAT INSTRUCTIONS.
- 
+- Output your response in the exact format specified below.
+
 FORMAT INSTRUCTIONS
 {format_instructions}
  

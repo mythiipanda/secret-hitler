@@ -51,18 +51,20 @@ def _print_round_summary(state: GameState, note: str = "") -> None:
     deck_fas = deck.count("fascist")
     logger(f"[ROUND SUMMARY]{(' ' + note) if note else ''} Board: {lib} Liberal, {fas} Fascist — Deck: {deck_lib}L/{deck_fas}F  Discard: {len(discard)}")
 
-def nomination_node(state: GameState) -> GameState:
+def nomination_node(state: GameState, runtime) -> GameState:
     logger(f"\n--- ROUND: President Player {state['current_president_idx']} ---")
     _print_round_summary(state)
-    president = state["agents"][state["current_president_idx"]]
+    agents = runtime.context.get("agents") if getattr(runtime, "context", None) else runtime.get("context", {})
+    president = agents[state["current_president_idx"]]
     chancellor_id = president.nominate(state)
     msg = f"Player {state['current_president_idx']} nominated Player {chancellor_id} as Chancellor."
     return {"nominated_chancellor_idx": chancellor_id, "phase": "vote", "messages": state["messages"] + [msg]}
 
-def voting_node(state: GameState) -> GameState:
+def voting_node(state: GameState, runtime) -> GameState:
     logger(f"\n[VOTING] On government: President {state['current_president_idx']}, Chancellor {state['nominated_chancellor_idx']}")
     votes = {}
-    for agent in state["agents"]:
+    agents = runtime.context.get("agents") if getattr(runtime, "context", None) else runtime.get("context", {})
+    for agent in agents:
         if state["players"][agent.agent_id]["alive"]:
             vote = agent.vote(state)
             votes[str(agent.agent_id)] = vote
@@ -75,7 +77,6 @@ def voting_node(state: GameState) -> GameState:
     if elected:
         msg = f"Government ELECTED ({ja_votes}/{total_votes} Ja). President {state['current_president_idx']}, Chancellor {state['nominated_chancellor_idx']}."
         logger(f"\n[RESULT] {msg}")
-        # Round summary for spectators
         logger(f"[ROUND SUMMARY] Board: {state.get('liberal_policies',0)} Liberal, {state.get('fascist_policies',0)} Fascist — Deck: {state.get('policy_deck',[]).count('liberal')}L/{state.get('policy_deck',[]).count('fascist')}F  Discard: {len(state.get('discard_pile',[]))}")
         if state["fascist_policies"] >= 3:
             chancellor = state["players"][state["nominated_chancellor_idx"]]
@@ -105,7 +106,6 @@ def voting_node(state: GameState) -> GameState:
                 new_discard = []
             else:
                 new_discard = state["discard_pile"]
-            # Print round summary after chaos enactment
             logger(f"[ROUND SUMMARY] Board: {new_liberal} Liberal, {new_fascist} Fascist — Deck: {new_deck.count('liberal')}L/{new_deck.count('fascist')}F  Discard: {len(new_discard)}")
             next_pres = (state["current_president_idx"] + 1) % PLAYER_COUNT
             return {
@@ -122,7 +122,6 @@ def voting_node(state: GameState) -> GameState:
             }
         else:
             next_pres = (state["current_president_idx"] + 1) % PLAYER_COUNT
-            # Print round summary for rejected government (no policy enacted)
             logger(f"[ROUND SUMMARY] Board: {state.get('liberal_policies',0)} Liberal, {state.get('fascist_policies',0)} Fascist — Deck: {state.get('policy_deck',[]).count('liberal')}L/{state.get('policy_deck',[]).count('fascist')}F  Discard: {len(state.get('discard_pile',[]))}")
             return {
                 "votes": votes,
@@ -133,7 +132,7 @@ def voting_node(state: GameState) -> GameState:
                 "messages": state["messages"] + [msg],
             }
 
-def president_legislative_node(state: GameState) -> GameState:
+def president_legislative_node(state: GameState, runtime) -> GameState:
     logger(f"\n[LEGISLATIVE SESSION] President draws 3 policies...")
     drawn = state["policy_deck"][:3]
     remaining_deck = state["policy_deck"][3:]
@@ -144,19 +143,17 @@ def president_legislative_node(state: GameState) -> GameState:
     else:
         new_discard = state["discard_pile"]
     logger(f"  (President sees: {drawn.count('liberal')} Liberal, {drawn.count('fascist')} Fascist)")
-    # Print interim summary reflecting the draw
     interim_state = {**state, "policy_deck": remaining_deck, "discard_pile": new_discard}
     _print_round_summary(interim_state, note="(after President draw)")
-    president = state["agents"][state["current_president_idx"]]
+    agents = runtime.context.get("agents") if getattr(runtime, "context", None) else runtime.get("context", {})
+    president = agents[state["current_president_idx"]]
     passed = president.president_legislate({**state, "drawn_policies": drawn})
     rem = drawn.copy()
     for p in passed:
         if p in rem:
             rem.remove(p)
     discarded = rem[0] if rem else None
-    # Update discard pile for spectator summary
     updated_discard = new_discard + ([discarded] if discarded else [])
-    # Print summary showing what was passed to Chancellor
     logger(f"[PRESIDENT ACTION] Passed to Chancellor: {passed.count('liberal')} Liberal, {passed.count('fascist')} Fascist")
     _print_round_summary({**state, "policy_deck": remaining_deck, "discard_pile": updated_discard}, note="(after President action)")
     return {
@@ -168,11 +165,12 @@ def president_legislative_node(state: GameState) -> GameState:
         "messages": state["messages"] + ["President drew 3 policies and passed 2 to Chancellor."],
     }
 
-def chancellor_legislative_node(state: GameState) -> GameState:
+def chancellor_legislative_node(state: GameState, runtime) -> GameState:
     logger(f"\n[LEGISLATIVE SESSION] Chancellor receives 2 policies...")
     passed = state["passed_policies"]
     logger(f"  (Chancellor sees: {passed.count('liberal')} Liberal, {passed.count('fascist')} Fascist)")
-    chancellor = state["agents"][state["nominated_chancellor_idx"]]
+    agents = runtime.context.get("agents") if getattr(runtime, "context", None) else runtime.get("context", {})
+    chancellor = agents[state["nominated_chancellor_idx"]]
     enacted = chancellor.chancellor_legislate({**state, "passed_policies": passed})
     remaining = passed.copy()
     remaining.remove(enacted)
@@ -181,7 +179,6 @@ def chancellor_legislative_node(state: GameState) -> GameState:
     new_liberal = state["liberal_policies"] + (1 if enacted == "liberal" else 0)
     new_fascist = state["fascist_policies"] + (1 if enacted == "fascist" else 0)
     msg = f"{enacted.upper()} policy enacted. Board: {new_liberal} Liberal, {new_fascist} Fascist."
-    # Print deck/discard summary for spectators after enactment
     deck_len = len(state.get("policy_deck", []))
     discard_len = len(state.get("discard_pile", [])) + (1 if discarded else 0)
     logger(f"[ROUND SUMMARY] Board: {new_liberal} Liberal, {new_fascist} Fascist — Deck size: {deck_len}  Discard size: {discard_len}")
@@ -221,8 +218,9 @@ def check_win_node(state: GameState) -> GameState:
     next_pres = (state["current_president_idx"] + 1) % PLAYER_COUNT
     return {"phase": "nominate", "current_president_idx": next_pres, "nominated_chancellor_idx": None, "messages": state["messages"] + [f"Next round: Player {next_pres} is President."]}
 
-def executive_action_node(state: GameState) -> GameState:
-    president = state["agents"][state["previous_president_idx"]]
+def executive_action_node(state: GameState, runtime) -> GameState:
+    agents = runtime.context.get("agents") if getattr(runtime, "context", None) else runtime.get("context", {})
+    president = agents[state["previous_president_idx"]]
     target = president.investigate_player(state)
     target_player = state["players"][target]
     party = "Fascist" if target_player["team"] == "fascist" else "Liberal"

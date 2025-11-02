@@ -9,5 +9,6 @@ dependencies = [
     "langchain-google-genai",
     "langchain-core",
     "python-dotenv",
-    "google-genai"
+    "google-genai",
+    "langchain>=1.0.3",
 ]

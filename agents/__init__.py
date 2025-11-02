@@ -1,14 +1,17 @@
-from typing import List, Any, Tuple, Optional
+from typing import List, Any, Optional
 from tools import nominate_tool, vote_tool, president_legislate_tool, chancellor_legislate_tool, investigate_tool
-from llm import LLMClient
 
 class Agent:
-    def __init__(self, aid: int, role: str, team: str, model: Optional[str] = None, api_key: Optional[str] = None):
+    def __init__(self, aid: int, role: str, team: str, model: Optional[str] = None, llm_client: Optional[Any] = None):
+        """
+        Agent is a lightweight wrapper around decision functions.
+        LLM/tool clients are provided via runtime/context or explicit llm_client injection.
+        """
         self.agent_id = aid
         self.role = role
         self.team = team
         self.model = model
-        self.llm = LLMClient(agent_name=f"player_{aid}", model=model, api_key=api_key)
+        self.llm = llm_client
 
     def nominate(self, state: dict) -> int:
         eligible = [
@@ -43,5 +46,6 @@ class Agent:
             target = eligible[0] if eligible else 0
         return target
 
-def initialize_agents(players: List[dict], model: Optional[str] = None, api_key: Optional[str] = None) -> List[Agent]:
-    return [Agent(p["id"], p["role"], p["team"], model, api_key=api_key) for p in players]
+def initialize_agents(players: List[dict], model: Optional[str] = None, llm_client: Optional[Any] = None) -> List[Agent]:
+    """Create runtime Agent objects. Provide shared llm_client via injection if available."""
+    return [Agent(p["id"], p["role"], p["team"], model, llm_client=llm_client) for p in players]
