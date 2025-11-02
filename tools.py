@@ -63,7 +63,18 @@ def _state_summary(state: dict) -> dict:
 def nominate_tool(agent_id: int, role: str, state: dict, model: Optional[str] = None, llm_client: Optional[Any] = None) -> Tuple[int, str, str]:
     ss = _state_summary(state)
     tmpl = LIBERAL_PROMPT_TEMPLATE if role == "liberal" else FASCIST_PROMPT_TEMPLATE
-    eligible = [str(p["id"]) for p in state["players"] if p["alive"] and p["id"] != agent_id]
+
+    # Align eligibility logic with agent rules: exclude self, previous chancellor, previous president
+    eligible_ids = [
+        p["id"]
+        for p in state["players"]
+        if p["alive"]
+        and p["id"] != agent_id
+        and (state.get("previous_chancellor_idx") is None or p["id"] != state.get("previous_chancellor_idx"))
+        and (state.get("previous_president_idx") is None or p["id"] != state.get("previous_president_idx"))
+    ]
+    eligible_str = ", ".join(str(e) for e in eligible_ids) if eligible_ids else "none"
+
     prompt = tmpl.format(
         agent_id=agent_id,
         role=role,
@@ -73,7 +84,7 @@ def nominate_tool(agent_id: int, role: str, state: dict, model: Optional[str] = 
         discard_size=ss["discard_size"],
         players_list=_players_list(state, agent_id),
         recent_history=_recent_history(state),
-        action=f"Nominate a Chancellor from eligible players: {', '.join(eligible)}.",
+        action=f"Nominate a Chancellor from eligible players: {eligible_str}.",
         format_instructions="Return a JSON object with: nominate_player (int), public_statement (string), private_thoughts (string)",
     )
     
@@ -102,6 +113,13 @@ def nominate_tool(agent_id: int, role: str, state: dict, model: Optional[str] = 
                 # Fallback: stream the raw result as string
                 logger(str(result), end="")
             
+            # Also print the structured output (for debugging / spectator)
+            try:
+                structured_repr = result.dict() if hasattr(result, "dict") else (result.content if hasattr(result, "content") else str(result))
+            except Exception:
+                structured_repr = str(result)
+            logger(f"[STRUCTURED OUTPUT] {structured_repr}")
+            
             logger("", end="\n")
             break
             
@@ -114,7 +132,6 @@ def nominate_tool(agent_id: int, role: str, state: dict, model: Optional[str] = 
                 else:
                     logger(f"[ERROR] Max retries exceeded for rate limit. Using fallback nomination.")
                     # Fallback: return a default nomination
-                    eligible_ids = [p["id"] for p in state["players"] if p["alive"] and p["id"] != agent_id]
                     result = NominationOut(
                         nominate_player=eligible_ids[0] if eligible_ids else 0,
                         public_statement="Rate limit exceeded, using default nomination",
@@ -125,14 +142,18 @@ def nominate_tool(agent_id: int, role: str, state: dict, model: Optional[str] = 
     
     # Extract the nominated player ID
     cid = result.nominate_player
-    public_statement = result.public_statement
-    private_thoughts = result.private_thoughts
+    public_statement = result.public_statement or ""
+    private_thoughts = result.private_thoughts or ""
     
-    # Ensure the nominated player is eligible
-    eligible_ids = [p["id"] for p in state["players"] if p["alive"] and p["id"] != agent_id]
+    # Validate nomination against eligibility; if invalid, log and adjust with provenance
     if cid not in eligible_ids:
-        cid = eligible_ids[0] if eligible_ids else 0
-    
+        adjusted = eligible_ids[0] if eligible_ids else 0
+        logger(f"[PARSE WARNING] Player {agent_id} nominated invalid Player {cid}; adjusting to eligible Player {adjusted}. Eligible: {eligible_ids}")
+        # annotate public statement to keep provenance visible
+        public_statement = (public_statement + " ") if public_statement else ""
+        public_statement += f"(adjusted nomination to Player {adjusted} due to invalid nominee)"
+        cid = adjusted
+
     public = f"I nominate Player {cid}"
     if public_statement:
         public += f": {public_statement}"
@@ -180,6 +201,13 @@ def vote_tool(agent_id: int, role: str, state: dict, model: Optional[str] = None
             else:
                 # Fallback: stream the raw result as string
                 logger(str(result), end="")
+            
+            # Also print the structured output (for debugging / spectator)
+            try:
+                structured_repr = result.dict() if hasattr(result, "dict") else (result.content if hasattr(result, "content") else str(result))
+            except Exception:
+                structured_repr = str(result)
+            logger(f"[STRUCTURED OUTPUT] {structured_repr}")
             
             logger("", end="\n")
             break
@@ -254,6 +282,13 @@ def president_legislate_tool(agent_id: int, state: dict, model: Optional[str] = 
             else:
                 # Fallback: stream the raw result as string
                 logger(str(result), end="")
+            
+            # Also print the structured output (for debugging / spectator)
+            try:
+                structured_repr = result.dict() if hasattr(result, "dict") else (result.content if hasattr(result, "content") else str(result))
+            except Exception:
+                structured_repr = str(result)
+            logger(f"[STRUCTURED OUTPUT] {structured_repr}")
             
             logger("", end="\n")
             break
@@ -335,6 +370,13 @@ def chancellor_legislate_tool(agent_id: int, state: dict, model: Optional[str] =
                 # Fallback: stream the raw result as string
                 logger(str(result), end="")
             
+            # Also print the structured output (for debugging / spectator)
+            try:
+                structured_repr = result.dict() if hasattr(result, "dict") else (result.content if hasattr(result, "content") else str(result))
+            except Exception:
+                structured_repr = str(result)
+            logger(f"[STRUCTURED OUTPUT] {structured_repr}")
+            
             logger("", end="\n")
             break
             
@@ -412,6 +454,13 @@ def investigate_tool(agent_id: int, state: dict, model: Optional[str] = None, ll
             else:
                 # Fallback: stream the raw result as string
                 logger(str(result), end="")
+            
+            # Also print the structured output (for debugging / spectator)
+            try:
+                structured_repr = result.dict() if hasattr(result, "dict") else (result.content if hasattr(result, "content") else str(result))
+            except Exception:
+                structured_repr = str(result)
+            logger(f"[STRUCTURED OUTPUT] {structured_repr}")
             
             logger("", end="\n")
             break
